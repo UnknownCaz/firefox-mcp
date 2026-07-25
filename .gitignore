@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+.env
+*.egg-info/
+build/
+dist/
+smoke_screenshot.png
+# local BiDi capture / scratch
+scratch/

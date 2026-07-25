@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy to ~/.config/firefox-mcp/config.json (on Windows: C:\\Users\\Tyler\\.config\\firefox-mcp\\config.json). Both lists are optional. Entries are matched as case-insensitive substrings of the tab's hostname.",
+
+  "blockedDomains": [
+    "bank",
+    "paypal.com",
+    "venmo.com",
+    "coinbase.com",
+    "wellsfargo.com",
+    "chase.com"
+  ],
+
+  "allowedDomains": []
+}
