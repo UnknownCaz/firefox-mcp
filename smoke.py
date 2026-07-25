@@ -9,20 +9,28 @@ import asyncio
 import base64
 import re
 
-from firefox_mcp.tools import mcp
+from firefox_mcp.tools import _client, mcp
+
+
+def _content(result):
+    # FastMCP.call_tool returns (content, structured) for JSON results but just
+    # the content list for image/binary results. Handle both.
+    return result[0] if isinstance(result, tuple) else result
 
 
 async def text(name, **args):
-    content, _ = await mcp.call_tool(name, args)
-    return content[0].text
+    return _content(await mcp.call_tool(name, args))[0].text
 
 
 async def main():
     print("=== browser_status ===")
     print(await text("browser_status"))
 
-    print("\n=== navigate example.com ===")
-    print(await text("navigate", url="https://example.com"))
+    print("\n=== list current tabs ===")
+    print(await text("list_tabs"))
+
+    print("\n=== new_tab -> example.com (leaves your existing tabs untouched) ===")
+    print(await text("new_tab", url="https://example.com"))
 
     print("\n=== snapshot ===")
     snap = await text("snapshot")
@@ -33,7 +41,7 @@ async def main():
     print(page[:300])
 
     print("\n=== screenshot ===")
-    content, _ = await mcp.call_tool("screenshot", {})
+    content = _content(await mcp.call_tool("screenshot", {}))
     img = content[0]
     data = getattr(img, "data", None)
     if data:
@@ -55,5 +63,13 @@ async def main():
         print("\n(no link ref found to click)")
 
 
+async def _main_and_close():
+    try:
+        await main()
+    finally:
+        # End the BiDi session so the next run isn't blocked by a stale one.
+        await _client.close()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(_main_and_close())

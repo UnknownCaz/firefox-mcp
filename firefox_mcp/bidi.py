@@ -98,10 +98,15 @@ class BiDiClient:
                     "the flag just opens a tab in the existing instance.)"
                 ) from exc
             self._reader_task = asyncio.create_task(self._reader())
-            await self._handshake()
+            try:
+                await self._handshake()
+            except BaseException:
+                # Don't leave a half-open socket / reader on a failed handshake.
+                await self._teardown_socket()
+                raise
             self._connected = True
 
-    async def close(self) -> None:
+    async def _teardown_socket(self) -> None:
         self._connected = False
         if self._reader_task is not None:
             self._reader_task.cancel()
@@ -113,15 +118,37 @@ class BiDiClient:
                 pass
             self._ws = None
 
+    async def close(self) -> None:
+        """End our BiDi session (freeing Firefox's single session slot) and close."""
+        if self._connected and self._ws is not None:
+            try:
+                await asyncio.wait_for(self._send("session.end", {}), timeout=3)
+            except Exception:
+                pass
+        await self._teardown_socket()
+
     async def _handshake(self) -> None:
-        """Create a BiDi-only session and subscribe to events."""
+        """Create a BiDi-only session and subscribe to events.
+
+        Firefox's remote agent allows only ONE active BiDi session. If a stale
+        session from a previously-crashed client is still held, session.new
+        fails and a fresh connection cannot clear it - so we surface an
+        actionable error telling the user to relaunch Firefox.
+        """
         try:
             result = await self._send("session.new", {"capabilities": {}})
-            self.session_capabilities = result.get("capabilities", {})
-        except BiDiError:
-            # A session may already exist on this connection; confirm liveness.
-            await self._send("session.status", {})
-            self.session_capabilities = {}
+        except BiDiError as exc:
+            msg = (exc.message or "").lower()
+            if "maximum" in msg or "already started" in msg or "session not created" in msg:
+                raise BiDiNotConnected(
+                    "Firefox already has an active WebDriver BiDi session that this "
+                    "connection can't reuse (Firefox allows only one). If another tool "
+                    "is automating Firefox, close it; otherwise fully quit Firefox and "
+                    "relaunch it with --remote-debugging-port 9222 to clear the stale "
+                    "session."
+                ) from exc
+            raise BiDiNotConnected(f"Could not start a BiDi session: {exc.message}") from exc
+        self.session_capabilities = result.get("capabilities", {})
         try:
             await self._send("session.subscribe", {"events": _SUBSCRIBED_EVENTS})
         except BiDiError:

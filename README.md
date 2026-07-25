@@ -163,6 +163,18 @@ Or run the scripted version (with Firefox in debug mode):
 
 ---
 
+## Troubleshooting
+
+- **"Maximum number of active sessions" / can't connect after a crash.** Firefox's
+  BiDi remote agent allows only **one** session at a time, and a hard crash of the
+  server can leave a stale one that a fresh connection can't clear. Fully quit
+  Firefox and relaunch it with the flag. (Clean shutdowns end the session
+  automatically, so this is rare.)
+- **"relaunch Firefox with --remote-debugging-port".** Firefox wasn't started with
+  the flag, or another instance was already running when you launched it. Fully
+  quit Firefox, then use `start-firefox-debug.bat`.
+- **"Active tab: (none)".** No tabs are open - open one.
+
 ## Out of scope
 
 Launching/managing Firefox; multi-browser support; file upload/download;
