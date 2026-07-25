@@ -75,6 +75,106 @@ class DomainTests(unittest.TestCase):
         ok, _ = safety.domain_check("about:blank", cfg)
         self.assertTrue(ok)
 
+    def test_allowlist_boundary_match_subdomain_allowed(self):
+        cfg = {"allowedDomains": ["example.com"], "blockedDomains": []}
+        ok, _ = safety.domain_check("https://example.com/x", cfg)
+        self.assertTrue(ok)
+        ok, _ = safety.domain_check("https://sub.example.com/x", cfg)
+        self.assertTrue(ok)
+
+    def test_allowlist_boundary_match_lookalike_refused(self):
+        # The verified bypass: a lookalike host must NOT satisfy the allowlist.
+        cfg = {"allowedDomains": ["example.com"], "blockedDomains": []}
+        ok, _ = safety.domain_check("https://example.com.evil.test/x", cfg)
+        self.assertFalse(ok)
+        ok, _ = safety.domain_check("https://notexample.com/x", cfg)
+        self.assertFalse(ok)
+
+    def test_blocklist_boundary_match_subdomain_refused(self):
+        cfg = {"blockedDomains": ["paypal.com"], "allowedDomains": []}
+        ok, _ = safety.domain_check("https://www.paypal.com/login", cfg)
+        self.assertFalse(ok)
+        ok, _ = safety.domain_check("https://paypal.com", cfg)
+        self.assertFalse(ok)
+
+    def test_blocklist_boundary_match_lookalike_allowed(self):
+        # "safepaypal.com.evil.test" is neither == "paypal.com" nor ends with
+        # ".paypal.com", so under boundary matching it is not blocked.
+        cfg = {"blockedDomains": ["paypal.com"], "allowedDomains": []}
+        ok, _ = safety.domain_check("https://safepaypal.com.evil.test/", cfg)
+        self.assertTrue(ok)
+        ok, _ = safety.domain_check("https://notpaypal.com/", cfg)
+        self.assertTrue(ok)
+
+    def test_blocklist_bare_keyword_no_longer_overmatches(self):
+        # Boundary matching fixes the old substring over-match.
+        cfg = {"blockedDomains": ["bank"], "allowedDomains": []}
+        ok, _ = safety.domain_check("https://safebank-credit.com/", cfg)
+        self.assertTrue(ok)
+
+    def test_trailing_dot_host_still_blocked(self):
+        # A trailing-dot FQDN must not dodge the blocklist.
+        cfg = {"blockedDomains": ["paypal.com"], "allowedDomains": []}
+        ok, _ = safety.domain_check("https://www.paypal.com./login", cfg)
+        self.assertFalse(ok)
+
+    def test_trailing_dot_entry_normalized(self):
+        cfg = {"blockedDomains": ["paypal.com."], "allowedDomains": []}
+        ok, _ = safety.domain_check("https://paypal.com/x", cfg)
+        self.assertFalse(ok)
+
+    def test_opaque_url_denied_under_allowlist(self):
+        # file:/data: must not slip past an allowlist meant to confine the agent.
+        cfg = {"allowedDomains": ["example.com"], "blockedDomains": []}
+        ok_file, _ = safety.domain_check("file:///C:/Users/secret.txt", cfg)
+        ok_data, _ = safety.domain_check("data:text/html,<h1>x</h1>", cfg)
+        self.assertFalse(ok_file)
+        self.assertFalse(ok_data)
+
+    def test_opaque_url_allowed_without_allowlist(self):
+        cfg = {"allowedDomains": [], "blockedDomains": ["paypal.com"]}
+        ok, _ = safety.domain_check("file:///C:/tmp/fixture.html", cfg)
+        self.assertTrue(ok)
+
+    def test_about_blank_allowed_even_under_allowlist(self):
+        cfg = {"allowedDomains": ["example.com"], "blockedDomains": []}
+        ok, _ = safety.domain_check("about:blank", cfg)
+        self.assertTrue(ok)
+
+
+class TypeSubmitGateTests(unittest.TestCase):
+    def test_submit_flag_in_form_gated(self):
+        needs, _ = safety.type_submit_requires_confirmation(
+            "hello", True, {"tag": "input", "inForm": True})
+        self.assertTrue(needs)
+
+    def test_submit_flag_outside_form_not_gated(self):
+        needs, _ = safety.type_submit_requires_confirmation(
+            "hello", True, {"tag": "input", "inForm": False})
+        self.assertFalse(needs)
+
+    def test_newline_in_input_in_form_gated(self):
+        # The bypass Double found: newline in text, submit=False, single-line input.
+        needs, _ = safety.type_submit_requires_confirmation(
+            "query\n", False, {"tag": "input", "inForm": True})
+        self.assertTrue(needs)
+
+    def test_carriage_return_in_input_in_form_gated(self):
+        needs, _ = safety.type_submit_requires_confirmation(
+            "query\r", False, {"tag": "input", "inForm": True})
+        self.assertTrue(needs)
+
+    def test_newline_in_textarea_not_gated(self):
+        # Textareas legitimately hold newlines - do not gate them.
+        needs, _ = safety.type_submit_requires_confirmation(
+            "line1\nline2", False, {"tag": "textarea", "inForm": True})
+        self.assertFalse(needs)
+
+    def test_plain_text_in_form_not_gated(self):
+        needs, _ = safety.type_submit_requires_confirmation(
+            "hello", False, {"tag": "input", "inForm": True})
+        self.assertFalse(needs)
+
 
 if __name__ == "__main__":
     unittest.main()

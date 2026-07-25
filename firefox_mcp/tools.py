@@ -375,10 +375,15 @@ async def click(ref: str, confirmed: bool = False) -> str:
 
 
 @mcp.tool(name="type")
-async def type_text(ref: str, text: str, submit: bool = False) -> str:
+async def type_text(ref: str, text: str, submit: bool = False, confirmed: bool = False) -> str:
     """Type `text` into the element with the given ref. If `submit`, press Enter after.
 
     Refuses to type into password / credential fields - type those yourself.
+
+    If this may submit a form - the `submit` flag, or a newline in `text` typed
+    into a single-line input - it is confirmation-gated: ask Tyler in the chat to
+    confirm, then call again with confirmed=true. Plain typing without a newline
+    (and submit into a non-form field like a search box) is never gated.
     """
     async def _run() -> str:
         ctx, url = await _active_context_info()
@@ -393,6 +398,9 @@ async def type_text(ref: str, text: str, submit: bool = False) -> str:
                     "type it in yourself - I won't enter passwords.")
         if not info.get("editable"):
             return f"Ref '{ref}' is a {info.get('tag', '?')}, not a text field. Use click instead?"
+        needs_confirm, reason = safety.type_submit_requires_confirmation(text, submit, info)
+        if needs_confirm and not confirmed:
+            return safety.CONFIRMATION_MESSAGE.format(reason=reason)
         values = [(ch, ch) for ch in text]
         await _client.perform_actions(ctx, _key_actions(values))
         if submit:

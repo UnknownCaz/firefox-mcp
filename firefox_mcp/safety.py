@@ -22,10 +22,11 @@ GATED_KEYWORDS = [
     "unsubscribe", "download", "sign in", "signin", "log in", "login", "checkout",
 ]
 
-# Example domain substrings blocked by default (user-editable in config.json).
-# These are EXAMPLES - Tyler should tune them to his own accounts.
+# Domains blocked by default (user-editable in config.json). Entries are matched
+# by host boundary (exact host or subdomain), so they must be real domains /
+# suffixes, not bare keywords. These are EXAMPLES - Tyler should tune them.
 DEFAULT_BLOCKED_DOMAINS = [
-    "bank", "paypal.com", "venmo.com", "coinbase.com", "wellsfargo.com", "chase.com",
+    "paypal.com", "venmo.com", "coinbase.com", "wellsfargo.com", "chase.com",
 ]
 
 
@@ -54,26 +55,63 @@ def load_config() -> dict[str, Any]:
 # ---------------------------------------------------------------------- #
 def host_of(url: str) -> str:
     try:
-        return (urlparse(url).hostname or "").lower()
+        # Strip a trailing FQDN dot ("example.com." -> "example.com") so it
+        # cannot dodge host-boundary matching.
+        return (urlparse(url).hostname or "").rstrip(".").lower()
     except ValueError:
         return ""
 
 
+def scheme_of(url: str) -> str:
+    try:
+        return (urlparse(url).scheme or "").lower()
+    except ValueError:
+        return ""
+
+
+def _host_matches(host: str, entry: str) -> bool:
+    """True if ``host`` equals ``entry`` or is a subdomain of it (host-boundary match).
+
+    Not a substring match - "example.com" matches "sub.example.com" but not
+    "example.com.evil.test" or "notexample.com".
+    """
+    entry = (entry or "").strip().lower().strip(".")
+    if not entry:
+        return False
+    host = (host or "").lower()
+    return host == entry or host.endswith("." + entry)
+
+
 def domain_check(url: str, config: Optional[dict[str, Any]] = None) -> tuple[bool, str]:
-    """Return (allowed, reason). Empty/opaque URLs (about:, blank) are allowed."""
-    host = host_of(url)
-    if not host:
-        return True, ""
+    """Return (allowed, reason).
+
+    Hostless URLs are decided by scheme: benign browser-internal pages
+    (about:blank, about:*) are always allowed; data-bearing local schemes
+    (file:, data:, blob:, javascript:) are allowed only when NO allowlist is set -
+    if an allowlist is configured to confine the agent, they must not slip through
+    (e.g. file:// local-file reads).
+    """
     cfg = config or load_config()
     allowed = cfg.get("allowedDomains") or []
     blocked = cfg.get("blockedDomains") or []
-    if allowed and not any(a in host for a in allowed):
+    host = host_of(url)
+    if not host:
+        scheme = scheme_of(url)
+        if scheme in ("", "about"):
+            return True, ""
+        if allowed:
+            return False, (
+                f"Opaque/local URL (scheme '{scheme}:') is not in allowedDomains - "
+                f"refusing to operate. Edit {CONFIG_PATH} to allow it."
+            )
+        return True, ""
+    if allowed and not any(_host_matches(host, a) for a in allowed):
         return False, (
             f"Domain '{host}' is not in allowedDomains - refusing to operate. "
             f"Edit {CONFIG_PATH} to allow it."
         )
     for b in blocked:
-        if b in host:
+        if _host_matches(host, b):
             return False, (
                 f"Domain '{host}' matches blockedDomains entry '{b}' - refusing to operate. "
                 f"Edit {CONFIG_PATH} to change this."
@@ -122,6 +160,24 @@ def press_key_requires_confirmation(key: str, focused: dict[str, Any]) -> tuple[
         if focused.get("inForm") or focused.get("isSubmit") or focused.get("submit"):
             return True, "Enter may submit the current form"
     return False, ""
+
+
+def type_submit_requires_confirmation(
+    text: str, submit: bool, info: dict[str, Any]
+) -> tuple[bool, str]:
+    """Whether a ``type`` call may submit a form and so needs confirmation.
+
+    Enter can reach a form three ways: the explicit ``submit`` flag, or a raw
+    newline embedded in ``text`` (in a single-line <input>, a newline can trigger
+    implicit form submission). Textarea / contenteditable treat a newline as a
+    literal character, so a bare newline only counts as a submit risk for <input>.
+    """
+    newline_in_text = ("\n" in (text or "")) or ("\r" in (text or ""))
+    if not (submit or newline_in_text):
+        return False, ""
+    if not submit and (info.get("tag") or "").lower() != "input":
+        return False, ""
+    return press_key_requires_confirmation("Enter", info)
 
 
 CONFIRMATION_MESSAGE = (
