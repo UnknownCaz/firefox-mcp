@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "firefox-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Attach-only WebDriver BiDi MCP server for driving your own Firefox."
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.2", "websockets>=13"]
