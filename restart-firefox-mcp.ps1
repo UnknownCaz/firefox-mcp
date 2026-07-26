@@ -52,12 +52,22 @@ function Ok($msg)   { Write-Host "   [ok] $msg"   -ForegroundColor Green }
 function Warn($msg) { Write-Host "   [!!] $msg"   -ForegroundColor Yellow }
 function Fail($msg) { Write-Host "   [XX] $msg"   -ForegroundColor Red }
 
-# Match on the command line, never on the interpreter name. A bare
+# Match on the command line, never on the interpreter name alone. A bare
 # "python*" match would happily kill an unrelated pytest run, a different MCP
 # server, or one of Tyler's own scripts - this box runs several.
+#
+# The Name allowlist is a REQUIRED second condition, not belt-and-braces. A
+# command-line match on its own also catches any SHELL whose command text merely
+# mentions the module - `powershell -Command "... firefox_mcp ..."`, a bash
+# pipeline grepping for it, or an agent running a diagnostic. Observed live: a
+# diagnostic command matched 4 of its own shell processes. Killing those would
+# take out the very session running the recovery.
+$ServerProcNames = @('python.exe', 'pythonw.exe', 'firefox-mcp.exe')
+
 function Get-FirefoxMcpProcs {
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
+            $_.Name -in $ServerProcNames -and
             $_.CommandLine -and (
                 $_.CommandLine -like "*$RepoName*firefox-mcp.exe*" -or
                 $_.CommandLine -like '*firefox_mcp*'
