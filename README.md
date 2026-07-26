@@ -171,6 +171,20 @@ Or run the scripted version (with Firefox in debug mode):
   server can leave a stale one that a fresh connection can't clear. Fully quit
   Firefox and relaunch it with the flag. (Clean shutdowns end the session
   automatically, so this is rare.)
+
+  The usual cause is a **stray server process** rather than Firefox itself: this
+  server runs as a stdio subprocess of the Claude Code client, and those
+  subprocesses can outlive the client, each still holding the one BiDi session.
+  Recover with `restart-firefox-mcp.ps1`, run **after** fully quitting Claude Code
+  and **before** relaunching it:
+
+  ```bat
+  powershell -ExecutionPolicy Bypass -File restart-firefox-mcp.ps1 -DryRun
+  powershell -ExecutionPolicy Bypass -File restart-firefox-mcp.ps1
+  ```
+
+  It refuses to run while the client is up (`-Force` overrides), prints every
+  process before killing it, and leaves an already-listening Firefox alone.
 - **"relaunch Firefox with --remote-debugging-port".** Firefox wasn't started with
   the flag, or another instance was already running when you launched it. Fully
   quit Firefox, then use `start-firefox-debug.bat`.
