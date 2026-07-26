@@ -46,7 +46,7 @@ the Host header. The server only ever connects to loopback.
 ## 2. Install
 
 ```bat
-cd C:\Users\Tyler\Claude\firefox-mcp
+cd C:\Users\Tyler\Claude\Projects\Work-In-Project\firefox-mcp
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .
 ```
@@ -64,7 +64,7 @@ Run the tests (no browser needed):
 ### Claude Code (CLI)
 
 ```bat
-claude mcp add firefox-mcp -- "C:\Users\Tyler\Claude\firefox-mcp\.venv\Scripts\firefox-mcp.exe"
+claude mcp add firefox-mcp -- "C:\Users\Tyler\Claude\Projects\Work-In-Project\firefox-mcp\.venv\Scripts\firefox-mcp.exe"
 ```
 
 ### Claude Desktop
@@ -75,7 +75,8 @@ Add to `claude_desktop_config.json` (or via the Connectors / MCP settings UI):
 {
   "mcpServers": {
     "firefox-mcp": {
-      "command": "C:\\Users\\Tyler\\Claude\\firefox-mcp\\.venv\\Scripts\\firefox-mcp.exe"
+      "command": "C:\\Users\\Tyler\\Claude\\Projects\\Work-In-Project\\firefox-mcp\\.venv\\Scripts\\firefox-mcp.exe",
+      "args": []
     }
   }
 }
