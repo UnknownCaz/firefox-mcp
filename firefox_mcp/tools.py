@@ -189,8 +189,12 @@ def _key_actions(values: list[tuple[str, str]]) -> list[dict[str, Any]]:
 # Status / tabs
 # ---------------------------------------------------------------------- #
 @mcp.tool()
-async def browser_status() -> str:
-    """Report the connection state, Firefox version, and the active tab's URL/title.
+async def firefox_status() -> str:
+    """Report whether this server is attached to Tyler's own Firefox, plus its
+    version and the active tab's URL/title.
+
+    This is specifically Tyler's real, logged-in Firefox, reached over WebDriver
+    BiDi on 127.0.0.1:9222 - NOT Claude Code's in-app browser pane, and NOT Chrome.
 
     Use this first to confirm the server can reach Firefox. If it can't, it tells
     you how to relaunch Firefox with the remote-debugging flag.

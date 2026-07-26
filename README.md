@@ -90,7 +90,7 @@ a session that's already running.
 
 | Tool | Args | Behavior |
 |---|---|---|
-| `browser_status` | - | Connection state, Firefox version, active tab URL/title |
+| `firefox_status` | - | Connection state, Firefox version, active tab URL/title |
 | `list_tabs` | - | Open tabs: index, title, URL; marks the active one |
 | `select_tab` | `index` | Set the active tab (all page tools act on it) |
 | `new_tab` | `url?` | Open a new tab, make it active |
@@ -149,7 +149,7 @@ This is a **guardrail, not a sandbox.**
 ## 6. Manual smoke test
 
 1. Run `start-firefox-debug.bat` (Firefox fully quit first).
-2. `browser_status` -> should report Connected + version.
+2. `firefox_status` -> should report Connected + version.
 3. `list_tabs` -> `select_tab` a tab.
 4. `snapshot` -> `read_page`.
 5. `click` a plain link -> `snapshot` again (refs refreshed).

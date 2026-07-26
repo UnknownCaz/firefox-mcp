@@ -47,7 +47,7 @@ async def connect(retries=20, delay=1.0):
 async def main():
     if not await connect():
         return
-    print(await text("browser_status"))
+    print(await text("firefox_status"))
     await text("new_tab", url=FIXTURE)
     await asyncio.sleep(0.6)
     snap = await text("snapshot")

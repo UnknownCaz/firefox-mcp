@@ -23,8 +23,8 @@ async def text(name, **args):
 
 
 async def main():
-    print("=== browser_status ===")
-    print(await text("browser_status"))
+    print("=== firefox_status ===")
+    print(await text("firefox_status"))
 
     print("\n=== list current tabs ===")
     print(await text("list_tabs"))
