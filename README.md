@@ -261,6 +261,31 @@ Or run the scripted version (with Firefox in debug mode):
 
 ## Troubleshooting
 
+### Leftover server processes
+
+Each Claude Code session spawns its own firefox-mcp server (a 3-process chain).
+They can pile up, and an abandoned one may still hold Firefox's single BiDi
+session - the cause of "Maximum number of active sessions".
+
+**Count is not evidence of a leak.** Measured 2026-08-16: 15 matching processes,
+which looked like an orphan pile and was actually 5 live sessions with 3
+processes each. What distinguishes them is parentage, not quantity.
+
+```bat
+powershell -ExecutionPolicy Bypass -NoProfile -File reap-orphans.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -NoProfile -File reap-orphans.ps1
+```
+
+`reap-orphans.ps1` kills only servers whose parent process is **gone**, so it is
+safe to run at any time, including with Claude Code open. A server whose parent
+is alive but is not Claude (one started by hand for debugging) is reported and
+left alone - "not a Claude child" is not the same claim as "abandoned", and only
+the second licenses a kill. Exit 2 means "orphans found" under `-DryRun`, so a
+watcher can distinguish it from a clean run without parsing text.
+
+Use `restart-firefox-mcp.ps1` instead when you want a full reset; it clears
+every server and so refuses to run while Claude Code is up.
+
 - **"Maximum number of active sessions" / can't connect after a crash.** Firefox's
   BiDi remote agent allows only **one** session at a time, and a hard crash of the
   server can leave a stale one that a fresh connection can't clear. Fully quit
