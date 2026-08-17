@@ -26,7 +26,7 @@ import threading
 import time
 import traceback
 
-from .tools import _client, mcp
+from .tools import close_all, mcp
 
 _WATCH_INTERVAL = 1.5  # seconds between client-liveness checks
 
@@ -88,7 +88,7 @@ def _start_client_watchdog(loop: asyncio.AbstractEventLoop) -> None:
             time.sleep(_WATCH_INTERVAL)
         # Client is gone: best-effort release Firefox's BiDi session, then exit.
         try:
-            asyncio.run_coroutine_threadsafe(_client.close(), loop).result(timeout=4)
+            asyncio.run_coroutine_threadsafe(close_all(), loop).result(timeout=4)
         except Exception:
             pass
         _hard_exit()
@@ -102,8 +102,9 @@ def main() -> None:
         try:
             await mcp.run_stdio_async()
         finally:
-            # Release Firefox's single BiDi session on a clean shutdown.
-            await _client.close()
+            # Release every Firefox's single BiDi session on a clean shutdown -
+            # sandbox included, or its slot stays held and the next start fails.
+            await close_all()
 
     try:
         asyncio.run(_run())

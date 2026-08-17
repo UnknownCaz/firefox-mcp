@@ -19,10 +19,70 @@ from .snapshot import READ_PAGE_JS, SNAPSHOT_JS, format_snapshot
 
 mcp = FastMCP("firefox-mcp")
 
-_client = BiDiClient()
-_active: dict[str, Optional[str]] = {"context": None}
+# ---------------------------------------------------------------------- #
+# Browser targets
+#
+# Two Firefoxes, deliberately kept apart:
+#   main    - Tyler's real, logged-in profile. Everything he cares about.
+#   sandbox - a throwaway profile on its own port, started by
+#             start-firefox-sandbox.ps1. Not signed in to anything.
+#
+# One server switches between them rather than registering two servers,
+# because two registrations would put 32 near-identical tools in the model's
+# context and invite acting on the wrong one. There is exactly one active
+# target; every page tool acts on it and says which when it matters.
+#
+# Each target gets its own BiDiClient (its own session, socket, and console
+# ring buffer) and its own remembered active tab, so switching back and forth
+# does not disturb either browser's state.
+# ---------------------------------------------------------------------- #
+BROWSER_TARGETS: dict[str, dict[str, str]] = {
+    "main": {
+        "ws": "ws://127.0.0.1:9222/session",
+        "desc": "Tyler's own logged-in Firefox (his tabs, logins, extensions)",
+    },
+    "sandbox": {
+        "ws": "ws://127.0.0.1:9223/session",
+        "desc": "throwaway automation profile - not signed in to anything",
+    },
+}
+DEFAULT_TARGET = "main"
+
+_clients: dict[str, BiDiClient] = {}
+_active_context: dict[str, Optional[str]] = {}
+_target: dict[str, str] = {"name": DEFAULT_TARGET}
 
 _READ_PAGE_CAP = 20_000
+
+
+def current_target() -> str:
+    return _target["name"]
+
+
+def active_client() -> BiDiClient:
+    """The BiDiClient for the current target, created lazily.
+
+    Lazy on purpose: constructing a client must not connect, so a sandbox that
+    was never started costs nothing and never produces a spurious error.
+    """
+    name = _target["name"]
+    if name not in _clients:
+        _clients[name] = BiDiClient(BROWSER_TARGETS[name]["ws"])
+    return _clients[name]
+
+
+async def close_all() -> None:
+    """End every open BiDi session. Called on shutdown.
+
+    Must cover ALL targets, not just the active one - a sandbox session left
+    open holds that Firefox's single session slot and the next server start
+    fails with "Maximum number of active sessions".
+    """
+    for client in list(_clients.values()):
+        try:
+            await client.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------- #
@@ -91,13 +151,28 @@ _SELECT_OPTION_JS = r"""
 }
 """
 
+# Must report the SAME fields _RESOLVE_CLICK_JS does. When this returned only
+# {tag, type, inForm, isSubmit:type==='submit'} the keyboard path was blind to
+# submit <button>s, <input type=image>, ARIA roles, and the element's own label -
+# so press_key sailed past gates that click enforced on the identical element.
 _FOCUSED_INFO_JS = r"""
 () => {
   const el = document.activeElement;
   if(!el) return JSON.stringify({none:true});
   const tag = el.tagName ? el.tagName.toLowerCase() : '';
   const type = (el.getAttribute && (el.getAttribute('type') || '')).toLowerCase();
-  return JSON.stringify({tag, type, inForm: !!(el.closest && el.closest('form')), isSubmit: type === 'submit'});
+  const isSubmit = (type === 'submit') ||
+                   (tag === 'button' && (el.type === 'submit' || (!el.type && !!el.form))) ||
+                   (tag === 'input' && type === 'image');
+  const name = ((el.innerText || el.value || (el.getAttribute && el.getAttribute('aria-label')) || '') + '')
+                 .replace(/\s+/g, ' ').trim().slice(0, 120);
+  const href = (tag === 'a') ? (el.getAttribute('href') || '') : '';
+  const role = (el.getAttribute && (el.getAttribute('role') || '')).toLowerCase();
+  return JSON.stringify({
+    tag, type, name, href, role,
+    inForm: !!(el.closest && el.closest('form')),
+    isSubmit: !!isSubmit
+  });
 }
 """
 
@@ -125,18 +200,23 @@ _KEY_MAP = {
 # ---------------------------------------------------------------------- #
 # Shared helpers
 # ---------------------------------------------------------------------- #
+def _readable_error(exc: BaseException) -> str:
+    """Phrase a connection/BiDi failure the way a person would want to read it."""
+    if isinstance(exc, BiDiNotConnected):
+        return f"Not connected to Firefox. {exc}"
+    return f"Firefox/BiDi error: {exc}"
+
+
 async def _safe(fn: Callable[[], Awaitable[Any]]) -> Any:
     """Run a tool body, translating connection/BiDi errors into readable text."""
     try:
         return await fn()
-    except BiDiNotConnected as exc:
-        return f"Not connected to Firefox. {exc}"
-    except BiDiError as exc:
-        return f"Firefox/BiDi error: {exc}"
+    except (BiDiNotConnected, BiDiError) as exc:
+        return _readable_error(exc)
 
 
 async def _top_contexts() -> list[dict[str, Any]]:
-    return await _client.get_tree()
+    return await active_client().get_tree()
 
 
 async def _active_context_info() -> tuple[str, str]:
@@ -145,10 +225,10 @@ async def _active_context_info() -> tuple[str, str]:
     if not contexts:
         raise BiDiError("no-tabs", "No open tabs in Firefox.")
     by_id = {c["context"]: c for c in contexts}
-    cur = _active["context"]
+    cur = _active_context.get(_target["name"])
     if cur not in by_id:
         cur = contexts[0]["context"]
-        _active["context"] = cur
+        _active_context[_target["name"]] = cur
     return cur, by_id[cur].get("url", "")
 
 
@@ -159,7 +239,7 @@ def _require_domain(url: str) -> Optional[str]:
 
 async def _tab_title(ctx: str) -> str:
     try:
-        remote = await _client.call_function(ctx, "() => document.title", [], await_promise=False)
+        remote = await active_client().call_function(ctx, "() => document.title", [], await_promise=False)
         return remote.get("value", "") if remote.get("type") == "string" else ""
     except BiDiError:
         return ""
@@ -189,28 +269,80 @@ def _key_actions(values: list[tuple[str, str]]) -> list[dict[str, Any]]:
 # Status / tabs
 # ---------------------------------------------------------------------- #
 @mcp.tool()
-async def firefox_status() -> str:
-    """Report whether this server is attached to Tyler's own Firefox, plus its
-    version and the active tab's URL/title.
+async def switch_browser(target: str = "") -> str:
+    """Choose which Firefox the page tools act on: 'main' or 'sandbox'.
 
-    This is specifically Tyler's real, logged-in Firefox, reached over WebDriver
-    BiDi on 127.0.0.1:9222 - NOT Claude Code's in-app browser pane, and NOT Chrome.
+    - main    - Tyler's real, logged-in Firefox on port 9222. His tabs, his
+                accounts, his extensions. Use this to see or act on what he is
+                actually doing.
+    - sandbox - a throwaway automation profile on port 9223, signed in to
+                nothing. Use this for browsing, scraping, or testing that should
+                not touch his session. Start it with start-firefox-sandbox.ps1.
+
+    Call with no argument to see the current target and what is available.
+    Switching does not disturb either browser - each keeps its own session and
+    its own active tab.
+    """
+    if not target:
+        lines = [f"Current target: {current_target()}", "", "Available:"]
+        for name, meta in BROWSER_TARGETS.items():
+            mark = " <- current" if name == current_target() else ""
+            live = "connected" if _clients.get(name) and _clients[name].connected else "not connected"
+            lines.append(f"  {name:8} {meta['ws']}  [{live}] - {meta['desc']}{mark}")
+        return "\n".join(lines)
+
+    key = target.strip().lower()
+    if key not in BROWSER_TARGETS:
+        return (f"Unknown target '{target}'. Choose one of: "
+                f"{', '.join(BROWSER_TARGETS)}.")
+    _target["name"] = key
+    meta = BROWSER_TARGETS[key]
+
+    # Report reachability now rather than letting the next tool fail: switching
+    # to a sandbox that was never started is the expected mistake, and the fix
+    # (run the launcher) is worth saying up front.
+    async def _run() -> str:
+        await active_client().ensure_connected()
+        caps = active_client().session_capabilities or {}
+        return (f"Target is now '{key}' ({meta['desc']}). "
+                f"Connected to {caps.get('browserName', 'firefox')} "
+                f"{caps.get('browserVersion', '?')} at {meta['ws']}.")
+    result = await _safe(_run)
+    if isinstance(result, str) and result.startswith("Not connected"):
+        hint = (" Run start-firefox-sandbox.ps1 to start it."
+                if key == "sandbox" else
+                " Run start-firefox-debug.bat to start it.")
+        return f"Target is now '{key}', but it is not reachable. {result}{hint}"
+    return result
+
+
+@mcp.tool()
+async def firefox_status() -> str:
+    """Report which Firefox this server is attached to, its version, and the
+    active tab's URL/title.
+
+    Reached over WebDriver BiDi on loopback - NOT Claude Code's in-app browser
+    pane, and NOT Chrome. Says which target is current ('main' = Tyler's real
+    logged-in Firefox, 'sandbox' = the throwaway automation profile); use
+    switch_browser to change it.
 
     Use this first to confirm the server can reach Firefox. If it can't, it tells
     you how to relaunch Firefox with the remote-debugging flag.
     """
     async def _run() -> str:
-        await _client.ensure_connected()
-        caps = _client.session_capabilities or {}
+        await active_client().ensure_connected()
+        caps = active_client().session_capabilities or {}
         name = caps.get("browserName", "firefox")
         version = caps.get("browserVersion", "?")
+        tgt = current_target()
+        head = f"Connected to {name} {version} [target: {tgt} - {BROWSER_TARGETS[tgt]['desc']}]."
         try:
             ctx, url = await _active_context_info()
             title = await _tab_title(ctx)
             tab = f'\nActive tab: "{title}" - {url}'
         except BiDiError:
             tab = "\nActive tab: (none)"
-        return f"Connected to {name} {version}.{tab}"
+        return f"{head}{tab}"
     return await _safe(_run)
 
 
@@ -243,7 +375,7 @@ async def select_tab(index: int) -> str:
         if index < 0 or index >= len(contexts):
             return f"No tab at index {index}. There are {len(contexts)} tab(s)."
         ctx = contexts[index]["context"]
-        _active["context"] = ctx
+        _active_context[_target["name"]] = ctx
         title = await _tab_title(ctx)
         return f'Active tab is now [{index}] "{title}" - {contexts[index].get("url", "")}'
     return await _safe(_run)
@@ -253,13 +385,13 @@ async def select_tab(index: int) -> str:
 async def new_tab(url: str = "") -> str:
     """Open a new tab (optionally at `url`) and make it the active tab."""
     async def _run() -> str:
-        ctx = await _client.create_context(type_="tab")
-        _active["context"] = ctx
+        ctx = await active_client().create_context(type_="tab")
+        _active_context[_target["name"]] = ctx
         if url:
             blocked = _require_domain(url)
             if blocked:
                 return f"Opened a blank new tab, but {blocked}"
-            await _client.navigate(ctx, url, wait="complete")
+            await active_client().navigate(ctx, url, wait="complete")
         return f"Opened new tab (context {ctx[:8]}...){' at ' + url if url else ''}."
     return await _safe(_run)
 
@@ -272,7 +404,7 @@ async def navigate(url: str) -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        result = await _client.navigate(ctx, url, wait="complete")
+        result = await active_client().navigate(ctx, url, wait="complete")
         return f"Navigated to {result.get('url', url)}."
     return await _safe(_run)
 
@@ -282,7 +414,7 @@ async def back() -> str:
     """Go back one entry in the active tab's history."""
     async def _run() -> str:
         ctx, _ = await _active_context_info()
-        await _client.traverse_history(ctx, -1)
+        await active_client().traverse_history(ctx, -1)
         _, url = await _active_context_info()
         return f"Went back. Now at {url}."
     return await _safe(_run)
@@ -293,7 +425,7 @@ async def forward() -> str:
     """Go forward one entry in the active tab's history."""
     async def _run() -> str:
         ctx, _ = await _active_context_info()
-        await _client.traverse_history(ctx, 1)
+        await active_client().traverse_history(ctx, 1)
         _, url = await _active_context_info()
         return f"Went forward. Now at {url}."
     return await _safe(_run)
@@ -315,7 +447,7 @@ async def snapshot() -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        data = await _client.eval_json(ctx, SNAPSHOT_JS)
+        data = await active_client().eval_json(ctx, SNAPSHOT_JS)
         return format_snapshot(data or {})
     return await _safe(_run)
 
@@ -328,7 +460,7 @@ async def read_page() -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        data = await _client.eval_json(ctx, READ_PAGE_JS)
+        data = await active_client().eval_json(ctx, READ_PAGE_JS)
         if not data:
             return "(no text - is a page loaded?)"
         text = data.get("text", "")
@@ -342,11 +474,19 @@ async def read_page() -> str:
 @mcp.tool()
 async def screenshot() -> Image:
     """Return a PNG screenshot of the active tab."""
-    ctx, url = await _active_context_info()
-    ok, reason = safety.domain_check(url)
-    if not ok:
-        raise BiDiError("blocked", reason)
-    png = await _client.capture_screenshot(ctx)
+    # The only tool that cannot use _safe: it returns an Image, so it has no
+    # way to hand back an error STRING without lying about its return type.
+    # Raising with the same readable text is the honest equivalent - previously
+    # this leaked a raw BiDiNotConnected traceback, and it is the tool most
+    # likely to be called when Firefox is already down.
+    try:
+        ctx, url = await _active_context_info()
+        ok, reason = safety.domain_check(url)
+        if not ok:
+            raise RuntimeError(f"Refused: {reason}")
+        png = await active_client().capture_screenshot(ctx)
+    except (BiDiNotConnected, BiDiError) as exc:
+        raise RuntimeError(_readable_error(exc)) from exc
     return Image(data=png, format="png")
 
 
@@ -366,14 +506,14 @@ async def click(ref: str, confirmed: bool = False) -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        info = await _client.eval_json(ctx, _RESOLVE_CLICK_JS, [ref])
+        info = await active_client().eval_json(ctx, _RESOLVE_CLICK_JS, [ref])
         if not info or not info.get("found"):
             return f"Ref '{ref}' is stale (element gone or page changed). Re-run snapshot."
         needs, reason = safety.click_requires_confirmation(info)
         if needs and not confirmed:
             return safety.CONFIRMATION_MESSAGE.format(reason=reason)
-        await _client.perform_actions(ctx, _click_actions(info["x"], info["y"]))
-        await _client.release_actions(ctx)
+        await active_client().perform_actions(ctx, _click_actions(info["x"], info["y"]))
+        await active_client().release_actions(ctx)
         return f'Clicked [{ref}] {info.get("tag", "")} "{info.get("name", "")}".'
     return await _safe(_run)
 
@@ -394,7 +534,7 @@ async def type_text(ref: str, text: str, submit: bool = False, confirmed: bool =
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        info = await _client.eval_json(ctx, _RESOLVE_TYPE_JS, [ref])
+        info = await active_client().eval_json(ctx, _RESOLVE_TYPE_JS, [ref])
         if not info or not info.get("found"):
             return f"Ref '{ref}' is stale (element gone or page changed). Re-run snapshot."
         if safety.is_password_target(info):
@@ -406,10 +546,10 @@ async def type_text(ref: str, text: str, submit: bool = False, confirmed: bool =
         if needs_confirm and not confirmed:
             return safety.CONFIRMATION_MESSAGE.format(reason=reason)
         values = [(ch, ch) for ch in text]
-        await _client.perform_actions(ctx, _key_actions(values))
+        await active_client().perform_actions(ctx, _key_actions(values))
         if submit:
-            await _client.perform_actions(ctx, _key_actions([("\uE007", "\uE007")]))
-        await _client.release_actions(ctx)
+            await active_client().perform_actions(ctx, _key_actions([("\uE007", "\uE007")]))
+        await active_client().release_actions(ctx)
         suffix = " and pressed Enter" if submit else ""
         return f'Typed into [{ref}]{suffix}.'
     return await _safe(_run)
@@ -423,7 +563,7 @@ async def select_option(ref: str, value: str) -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        info = await _client.eval_json(ctx, _SELECT_OPTION_JS, [ref, value])
+        info = await active_client().eval_json(ctx, _SELECT_OPTION_JS, [ref, value])
         if not info or not info.get("found"):
             return f"Ref '{ref}' is stale. Re-run snapshot."
         if info.get("notSelect"):
@@ -439,8 +579,11 @@ async def select_option(ref: str, value: str) -> str:
 async def press_key(key: str, confirmed: bool = False) -> str:
     """Press a single key on the active tab (Enter, Escape, Tab, arrows, Backspace, ...).
 
-    Enter is confirmation-gated when the focused element is inside a form (it may
-    submit): ask Tyler first, then call again with confirmed=true.
+    Enter and Space are confirmation-gated whenever they could activate the
+    focused element - a submit control, anything inside a form (Enter), or a
+    focused button/link/checkbox. Ask Tyler first, then call again with
+    confirmed=true. Navigation keys (arrows, Tab, Escape, Home/End, PageUp/Down)
+    are never gated.
     """
     async def _run() -> str:
         ctx, url = await _active_context_info()
@@ -453,12 +596,12 @@ async def press_key(key: str, confirmed: bool = False) -> str:
                 value = key.strip()
             else:
                 return f"Unknown key '{key}'. Try: Enter, Escape, Tab, Backspace, Delete, arrows, Home, End, PageUp, PageDown."
-        focused = await _client.eval_json(ctx, _FOCUSED_INFO_JS) or {}
+        focused = await active_client().eval_json(ctx, _FOCUSED_INFO_JS) or {}
         needs, reason = safety.press_key_requires_confirmation(key, focused)
         if needs and not confirmed:
             return safety.CONFIRMATION_MESSAGE.format(reason=reason)
-        await _client.perform_actions(ctx, _key_actions([(value, value)]))
-        await _client.release_actions(ctx)
+        await active_client().perform_actions(ctx, _key_actions([(value, value)]))
+        await active_client().release_actions(ctx)
         return f"Pressed {key}."
     return await _safe(_run)
 
@@ -474,7 +617,7 @@ async def scroll(direction: str, amount: int = 500) -> str:
         blocked = _require_domain(url)
         if blocked:
             return blocked
-        pos = await _client.eval_json(ctx, _SCROLL_JS, [d, str(int(amount))]) or {}
+        pos = await active_client().eval_json(ctx, _SCROLL_JS, [d, str(int(amount))]) or {}
         return f"Scrolled {d}. Now at y={pos.get('y', '?')} (max {pos.get('maxY', '?')})."
     return await _safe(_run)
 
@@ -483,8 +626,8 @@ async def scroll(direction: str, amount: int = 500) -> str:
 async def console_logs() -> str:
     """Show recent browser console log entries from the active session (last 100)."""
     async def _run() -> str:
-        await _client.ensure_connected()
-        entries = list(_client.console_logs)
+        await active_client().ensure_connected()
+        entries = list(active_client().console_logs)
         if not entries:
             return "(no console entries captured yet)"
         lines = []

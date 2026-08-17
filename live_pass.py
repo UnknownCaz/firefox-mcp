@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from firefox_mcp.tools import _client, mcp
+from firefox_mcp.tools import active_client, close_all, mcp
 from firefox_mcp import safety
 
 # Committed fixture next to this script, resolved to a file:// URL so the pass
@@ -35,7 +35,7 @@ async def text(name, **args):
 async def connect(retries=20, delay=1.0):
     for i in range(retries):
         try:
-            await _client.ensure_connected()
+            await active_client().ensure_connected()
             return True
         except Exception as e:  # BiDi may still be warming up
             if i == retries - 1:
@@ -110,7 +110,7 @@ async def _main():
     try:
         await main()
     finally:
-        await _client.close()  # send session.end so we don't orphan the session
+        await close_all()  # send session.end so we don't orphan the session
 
 
 if __name__ == "__main__":

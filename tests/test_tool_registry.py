@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     "select_option",
     "select_tab",
     "snapshot",
+    "switch_browser",
     "type",
 }
 
@@ -55,7 +56,7 @@ class ToolRegistryTests(unittest.TestCase):
         # Freezing the full set rather than the count catches an accidental
         # rename of ANY tool, plus dropped decorators and silent additions,
         # instead of passing on arithmetic.
-        self.assertEqual(len(EXPECTED_TOOLS), 16)
+        self.assertEqual(len(EXPECTED_TOOLS), 17)
         self.assertEqual(_tool_names(), EXPECTED_TOOLS)
 
 

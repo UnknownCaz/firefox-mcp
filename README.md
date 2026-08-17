@@ -13,6 +13,38 @@ server **attaches** to it and **never launches or closes Firefox**.
 
 ---
 
+## 0. Read this before using the debug flag
+
+`--remote-debugging-port` starts Firefox's WebDriver Remote Agent, which calls
+`RecommendedPreferences.applyPreferences()` and writes **~108 automation prefs
+into whatever profile it attaches to**. They land on the *user* pref branch -
+the one that persists to `prefs.js` - and are reverted only by the
+`xpcom-shutdown` observer, i.e. a **clean exit**. Any force-kill, crash, or
+power loss makes them permanent.
+
+This is not theoretical. It happened to this profile: Safe Browsing off,
+extension updates off, password saving off, a completely blank Firefox Home, and
+Firefox Accounts / remote settings / telemetry repointed at unresolvable
+`%(server)s` placeholder hosts. 101 prefs, silently.
+
+**The fix is one line in the profile's `user.js`:**
+
+```
+user_pref("remote.prefs.recommended", false);
+```
+
+The shipped default is `true` (`greprefs.js`). Setting it false makes
+`applyPreferences()` a no-op. **firefox-mcp still attaches fine** - those prefs
+are test-harness conveniences, not a BiDi requirement.
+
+`ensure-profile-guard.ps1` installs and verifies that line, and every launcher
+here runs it first. **The guard lives in the profile, not in this repo**, so a
+profile reset silently removes it - which is why it is checked on every launch
+rather than assumed. If a profile already carries leaked prefs, strip them with
+`depoison-profile.ps1` (Firefox must be fully closed).
+
+---
+
 ## 1. Launch Firefox in debug mode
 
 Firefox must be started with the remote-debugging flag so it exposes a BiDi
@@ -22,24 +54,76 @@ WebSocket at `ws://127.0.0.1:9222/session`.
 the flag just opens a tab in the existing instance and the remote agent does
 **not** start.
 
-Then either run the helper:
+Use the helper - it runs the profile guard before launching:
 
 ```bat
 start-firefox-debug.bat
 ```
 
-or launch manually:
+To launch manually, check the guard yourself first:
 
 ```bat
+powershell -ExecutionPolicy Bypass -NoProfile -File ensure-profile-guard.ps1
 "C:\Program Files\Mozilla Firefox\firefox.exe" --remote-debugging-port 9222
 ```
 
-**To make it permanent**, edit your Firefox shortcut: right-click -> Properties ->
-append ` --remote-debugging-port 9222` to the end of the **Target** field. Every
-launch from that shortcut then enables the remote agent.
+**Do not put `--remote-debugging-port` in your everyday Firefox shortcut.** An
+earlier version of this README suggested exactly that; it is the worst version
+of this problem, because it skips the guard check and leaves the remote agent
+enabled on every single launch, including the ones where Firefox later dies
+uncleanly. Launch through `start-firefox-debug.bat` when you actually want
+Claude attached.
 
 Note: `127.0.0.1` is required (not `localhost`) - Firefox's remote agent checks
 the Host header. The server only ever connects to loopback.
+
+---
+
+## 1b. Two browsers: `main` and `sandbox`
+
+One server, two Firefoxes, switched with the `switch_browser` tool:
+
+| Target | Port | Profile | What it is |
+|---|---|---|---|
+| `main` | 9222 | Tyler's own | His tabs, logins, extensions. The default. |
+| `sandbox` | 9223 | throwaway | Empty, signed in to nothing. |
+
+Start the sandbox (it can run at the same time as his normal Firefox):
+
+```bat
+powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1
+```
+
+```bat
+powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1 -Status
+powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1 -Reset
+```
+
+Use `sandbox` for browsing, scraping, or testing that should not touch Tyler's
+session; use `main` to see or act on what he actually has open.
+
+**A separate profile cannot see his tabs, and that is not a limitation to work
+around - it is the whole point.** A profile *is* the tabs, cookies, logins,
+extensions and prefs, in one directory. There is no way to share the tabs but
+split the settings; they are the same object. If a task needs his real session,
+it needs `main`.
+
+Implementation notes worth knowing:
+
+- Each target holds its own BiDi client, session, console buffer, and remembered
+  active tab, so switching does not disturb either browser.
+- `--no-remote` is **required** for the second instance. Without it a second
+  `firefox.exe` just hands its command line to the running one and exits - you
+  get a new tab in Tyler's window and no sandbox.
+- The sandbox profile lives at `%LOCALAPPDATA%\firefox-mcp\sandbox-profile`,
+  outside this repo, because it is disposable state and would be a large
+  accidental commit.
+- The sandbox is guarded too. Its automation prefs would be survivable (it is
+  throwaway), but they also switch Safe Browsing off, and this is the browser
+  most likely to be pointed at pages nobody vouched for.
+- Shutdown ends **every** target's session. A sandbox session left open holds
+  that Firefox's single session slot and the next start fails with "Maximum
+  number of active sessions".
 
 ---
 
@@ -91,7 +175,8 @@ a session that's already running.
 
 | Tool | Args | Behavior |
 |---|---|---|
-| `firefox_status` | - | Connection state, Firefox version, active tab URL/title |
+| `switch_browser` | `target?` | Choose `main` or `sandbox`; no arg lists both |
+| `firefox_status` | - | Current target, Firefox version, active tab URL/title |
 | `list_tabs` | - | Open tabs: index, title, URL; marks the active one |
 | `select_tab` | `index` | Set the active tab (all page tools act on it) |
 | `new_tab` | `url?` | Open a new tab, make it active |

@@ -153,12 +153,68 @@ def click_requires_confirmation(info: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
+# Keys that ACTIVATE whatever currently has focus, rather than just moving the
+# caret or scrolling. Enter submits forms and activates buttons/links; Space
+# activates buttons and toggles checkboxes. Both reach a consequential action
+# without a mouse click, so both have to be gated - gating only Enter left a
+# hole where press_key("space") on a focused "Delete account" button fired
+# ungated while the identical click was refused.
+ACTIVATION_KEYS = ("enter", "return", "space", "spacebar")
+
+# Keys that only submit a form implicitly. Space activates the focused control
+# but does NOT trigger a form's implicit submission, so a plain text input is
+# only at risk from Enter.
+IMPLICIT_SUBMIT_KEYS = ("enter", "return")
+
+
+def is_activatable(info: dict[str, Any]) -> bool:
+    """True if the element does something when activated by keyboard.
+
+    Mirrors the submit/control detection in the click path so that reaching a
+    control by keyboard is gated exactly as reaching it by mouse.
+    """
+    if info.get("isSubmit") or info.get("submit"):
+        return True
+    tag = (info.get("tag") or "").lower()
+    itype = (info.get("type") or "").lower()
+    role = (info.get("role") or "").lower()
+    if tag == "button":
+        return True
+    if tag == "input" and itype in ("submit", "button", "image", "reset", "checkbox", "radio"):
+        return True
+    if tag == "a" and info.get("href"):
+        return True
+    return role in ("button", "link", "menuitem", "menuitemcheckbox", "checkbox", "switch", "tab")
+
+
 def press_key_requires_confirmation(key: str, focused: dict[str, Any]) -> tuple[bool, str]:
-    """Enter/Return inside a form (or on a submit control) can submit - gate it."""
+    """Gate keys that can activate the focused control or submit its form.
+
+    Three distinct risks, in order of severity:
+      1. the focused control IS a submit control;
+      2. Enter inside a form implicitly submits it, even from a plain text input;
+      3. Enter/Space activates a focused button/link - which may be "Delete
+         account" just as easily as "Next page", so it inherits the same
+         keyword check the click path uses.
+    """
     k = (key or "").strip().lower()
-    if k in ("enter", "return"):
-        if focused.get("inForm") or focused.get("isSubmit") or focused.get("submit"):
-            return True, "Enter may submit the current form"
+    if k not in ACTIVATION_KEYS:
+        return False, ""
+
+    if focused.get("isSubmit") or focused.get("submit"):
+        return True, "focused element is a submit control"
+
+    if k in IMPLICIT_SUBMIT_KEYS and focused.get("inForm"):
+        return True, "Enter may submit the current form"
+
+    if is_activatable(focused):
+        # Prefer the specific reason ("matches 'delete'") over the generic one.
+        needs, reason = click_requires_confirmation(focused)
+        if needs:
+            return True, reason
+        label = (focused.get("tag") or "control").lower()
+        return True, f"{k} activates the focused <{label}>"
+
     return False, ""
 
 

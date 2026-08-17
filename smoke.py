@@ -9,7 +9,7 @@ import asyncio
 import base64
 import re
 
-from firefox_mcp.tools import _client, mcp
+from firefox_mcp.tools import active_client, close_all, mcp
 
 
 def _content(result):
@@ -68,7 +68,7 @@ async def _main_and_close():
         await main()
     finally:
         # End the BiDi session so the next run isn't blocked by a stale one.
-        await _client.close()
+        await close_all()
 
 
 if __name__ == "__main__":

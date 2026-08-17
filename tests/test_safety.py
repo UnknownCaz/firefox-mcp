@@ -40,6 +40,83 @@ class GatedActionTests(unittest.TestCase):
         self.assertFalse(needs)
 
 
+class ActivationKeyGateTests(unittest.TestCase):
+    """Regressions for the keyboard path being weaker than the click path.
+
+    press_key used to gate ONLY Enter, and only via inForm/isSubmit - so Space
+    on a focused destructive button fired with no confirmation at all.
+    """
+
+    def test_space_on_focused_button_is_gated(self):
+        # The hole: identical element, gated by click, ungated by keyboard.
+        needs, _ = safety.press_key_requires_confirmation(
+            "Space", {"tag": "button", "name": "Delete account", "inForm": False})
+        self.assertTrue(needs)
+
+    def test_space_reports_the_specific_keyword_reason(self):
+        _, reason = safety.press_key_requires_confirmation(
+            "Space", {"tag": "button", "name": "Delete account", "inForm": False})
+        self.assertIn("delete", reason.lower())
+
+    def test_enter_on_button_outside_form_is_gated(self):
+        # A <button onclick=...> outside any form was previously ungated.
+        needs, _ = safety.press_key_requires_confirmation(
+            "Enter", {"tag": "button", "name": "Do the thing", "inForm": False})
+        self.assertTrue(needs)
+
+    def test_space_on_link_is_gated(self):
+        needs, _ = safety.press_key_requires_confirmation(
+            "Space", {"tag": "a", "href": "/checkout", "name": "Continue"})
+        self.assertTrue(needs)
+
+    def test_aria_role_button_is_gated(self):
+        needs, _ = safety.press_key_requires_confirmation(
+            "Enter", {"tag": "div", "role": "button", "name": "Send"})
+        self.assertTrue(needs)
+
+    def test_space_in_plain_text_input_not_gated(self):
+        # Space while typing in a text box is the overwhelmingly common case and
+        # must stay ungated, or the gate becomes noise and gets ignored.
+        needs, _ = safety.press_key_requires_confirmation(
+            "Space", {"tag": "input", "type": "text", "inForm": True})
+        self.assertFalse(needs)
+
+    def test_space_on_body_not_gated(self):
+        # Space scrolls the page when nothing interactive has focus.
+        needs, _ = safety.press_key_requires_confirmation("Space", {"tag": "body"})
+        self.assertFalse(needs)
+
+    def test_arrow_keys_never_gated_even_on_a_button(self):
+        for key in ("ArrowDown", "Tab", "Escape", "PageDown", "Home"):
+            needs, _ = safety.press_key_requires_confirmation(
+                key, {"tag": "button", "name": "Delete account"})
+            self.assertFalse(needs, f"{key!r} should not be gated")
+
+    def test_submit_button_detected_by_form_membership(self):
+        # _FOCUSED_INFO_JS now reports isSubmit for a <button> owned by a form.
+        needs, reason = safety.press_key_requires_confirmation(
+            "Enter", {"tag": "button", "isSubmit": True, "name": "Go"})
+        self.assertTrue(needs)
+        self.assertIn("submit", reason.lower())
+
+
+class ActivatableTests(unittest.TestCase):
+    def test_buttons_and_controls_are_activatable(self):
+        self.assertTrue(safety.is_activatable({"tag": "button"}))
+        self.assertTrue(safety.is_activatable({"tag": "input", "type": "submit"}))
+        self.assertTrue(safety.is_activatable({"tag": "input", "type": "image"}))
+        self.assertTrue(safety.is_activatable({"tag": "input", "type": "checkbox"}))
+        self.assertTrue(safety.is_activatable({"tag": "a", "href": "/x"}))
+        self.assertTrue(safety.is_activatable({"role": "menuitem"}))
+
+    def test_inert_elements_are_not_activatable(self):
+        self.assertFalse(safety.is_activatable({"tag": "input", "type": "text"}))
+        self.assertFalse(safety.is_activatable({"tag": "textarea"}))
+        self.assertFalse(safety.is_activatable({"tag": "body"}))
+        self.assertFalse(safety.is_activatable({"tag": "div"}))
+        self.assertFalse(safety.is_activatable({"tag": "a"}))  # anchor with no href
+
+
 class PasswordTests(unittest.TestCase):
     def test_password_type(self):
         self.assertTrue(safety.is_password_target({"type": "password"}))
