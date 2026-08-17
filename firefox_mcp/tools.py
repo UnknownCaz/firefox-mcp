@@ -5,6 +5,12 @@ touch other tabs. Interaction is only ever via element refs from ``snapshot``,
 resolved server-side against ``window.__claudeRefs`` - never by coordinates
 Claude supplies. Page content is untrusted: a tool does exactly and only what
 its arguments say.
+
+Anything read out of a page leaves here fenced as untrusted data (see
+``untrusted``): read_page, snapshot and console_logs get a tagged block, and
+short page-controlled strings - tab titles, URLs - are flattened to one bounded
+line so they cannot fake structure. The rule is that no page-authored text
+reaches the model outside a marked boundary.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from mcp.server.fastmcp import FastMCP, Image
 
-from . import safety
+from . import safety, untrusted
 from .bidi import BiDiClient, BiDiError, BiDiNotConnected
 from .snapshot import READ_PAGE_JS, SNAPSHOT_JS, format_snapshot
 
@@ -238,11 +244,19 @@ def _require_domain(url: str) -> Optional[str]:
 
 
 async def _tab_title(ctx: str) -> str:
+    """The tab's title, flattened to one bounded line.
+
+    document.title is page-controlled. Fencing a one-line title would cost more
+    context than it protects, but a raw one could carry newlines and a forged
+    marker into list_tabs / firefox_status output, so it gets neutralized here -
+    once, at the single place every caller goes through.
+    """
     try:
         remote = await active_client().call_function(ctx, "() => document.title", [], await_promise=False)
-        return remote.get("value", "") if remote.get("type") == "string" else ""
+        title = remote.get("value", "") if remote.get("type") == "string" else ""
     except BiDiError:
         return ""
+    return untrusted.inline(title)
 
 
 def _click_actions(x: int, y: int) -> list[dict[str, Any]]:
@@ -362,7 +376,7 @@ async def list_tabs() -> str:
             ctx = c["context"]
             title = await _tab_title(ctx)
             marker = " *active*" if ctx == active else ""
-            lines.append(f'[{i}] "{title}" - {c.get("url", "")}{marker}')
+            lines.append(f'[{i}] "{title}" - {untrusted.inline(c.get("url", ""))}{marker}')
         return "\n".join(lines)
     return await _safe(_run)
 
@@ -377,7 +391,8 @@ async def select_tab(index: int) -> str:
         ctx = contexts[index]["context"]
         _active_context[_target["name"]] = ctx
         title = await _tab_title(ctx)
-        return f'Active tab is now [{index}] "{title}" - {contexts[index].get("url", "")}'
+        return (f'Active tab is now [{index}] "{title}" - '
+                f'{untrusted.inline(contexts[index].get("url", ""))}')
     return await _safe(_run)
 
 
@@ -405,7 +420,7 @@ async def navigate(url: str) -> str:
         if blocked:
             return blocked
         result = await active_client().navigate(ctx, url, wait="complete")
-        return f"Navigated to {result.get('url', url)}."
+        return f"Navigated to {untrusted.inline(result.get('url', url))}."
     return await _safe(_run)
 
 
@@ -448,7 +463,10 @@ async def snapshot() -> str:
         if blocked:
             return blocked
         data = await active_client().eval_json(ctx, SNAPSHOT_JS)
-        return format_snapshot(data or {})
+        # Element labels, aria-labels and hrefs are all page-authored, so the
+        # whole tree is untrusted - the refs are ours, the words around them
+        # are not.
+        return untrusted.fence(format_snapshot(data or {}), source="snapshot", url=url)
     return await _safe(_run)
 
 
@@ -464,10 +482,13 @@ async def read_page() -> str:
         if not data:
             return "(no text - is a page loaded?)"
         text = data.get("text", "")
-        header = f'Page: "{data.get("title", "")}" ({data.get("url", "")})\n\n'
         if len(text) > _READ_PAGE_CAP:
             text = text[:_READ_PAGE_CAP] + "\n...[truncated]"
-        return header + text
+        # The title goes INSIDE the fence: it is page-controlled like the body,
+        # and it used to sit in an unfenced header where a crafted <title> would
+        # have read as top-level text.
+        body = f'Page title: {untrusted.inline(data.get("title", ""))}\n\n{text}'
+        return untrusted.fence(body, source="read_page", url=data.get("url", ""))
     return await _safe(_run)
 
 
@@ -637,5 +658,8 @@ async def console_logs() -> str:
             if not text and e.get("args"):
                 text = " ".join(str(a.get("value", "")) for a in e.get("args", []))
             lines.append(f"[{level}] {text}")
-        return "\n".join(lines)
+        # Console output is page-authored too - console.log() is as good a
+        # delivery channel for an injected instruction as body text, and an
+        # easier one to overlook because it reads like debug output.
+        return untrusted.fence("\n".join(lines), source="console_logs")
     return await _safe(_run)

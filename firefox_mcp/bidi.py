@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 from collections import deque
+from urllib.parse import urlparse
 from typing import Any, Optional
 
 import websockets
@@ -59,6 +60,9 @@ class BiDiClient:
         if not _loopback_ok(ws_url):
             raise ValueError(f"Refusing non-loopback BiDi URL: {ws_url!r}")
         self.ws_url = ws_url
+        # Kept for error messages: with two targets on two ports, a hardcoded
+        # 9222 in a diagnostic sends the reader to the wrong browser.
+        self.port = urlparse(ws_url).port or 9222
         self._ws: Optional[Any] = None
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
@@ -93,7 +97,7 @@ class BiDiClient:
                 self._ws = None
                 raise BiDiNotConnected(
                     f"Could not connect to Firefox at {self.ws_url}. Make sure Firefox "
-                    "is running and was launched with --remote-debugging-port 9222. "
+                    f"is running and was launched with --remote-debugging-port {self.port}. "
                     "(Fully quit Firefox first, then relaunch with the flag - otherwise "
                     "the flag just opens a tab in the existing instance.)"
                 ) from exc
@@ -141,11 +145,12 @@ class BiDiClient:
             msg = (exc.message or "").lower()
             if "maximum" in msg or "already started" in msg or "session not created" in msg:
                 raise BiDiNotConnected(
-                    "Firefox already has an active WebDriver BiDi session that this "
-                    "connection can't reuse (Firefox allows only one). If another tool "
-                    "is automating Firefox, close it; otherwise fully quit Firefox and "
-                    "relaunch it with --remote-debugging-port 9222 to clear the stale "
-                    "session."
+                    f"The Firefox on port {self.port} already has an active WebDriver "
+                    "BiDi session that this connection can't reuse (Firefox allows only "
+                    "one). If another tool is automating it, close that; otherwise fully "
+                    f"quit THAT Firefox and relaunch it on port {self.port} to clear the "
+                    "stale session. A client that died mid-command (a timeout on "
+                    "session.new, say) leaves exactly this behind."
                 ) from exc
             raise BiDiNotConnected(f"Could not start a BiDi session: {exc.message}") from exc
         self.session_capabilities = result.get("capabilities", {})

@@ -124,6 +124,16 @@ Implementation notes worth knowing:
 - Shutdown ends **every** target's session. A sandbox session left open holds
   that Firefox's single session slot and the next start fails with "Maximum
   number of active sessions".
+- If the sandbox starts refusing sessions (`session.status` reports
+  `ready:false, "Session already started"` with nothing connected to the port),
+  a client died mid-`session.new` and Firefox is holding the session for a
+  connection that no longer exists. Restarting the browser is not always enough,
+  because an unclean close leaves crash-recovery state that can make the next
+  `session.new` exceed the 30s command timeout and orphan a session all over
+  again. `-Reset` wipes the profile and breaks the loop. (This is a side effect
+  of guarding the sandbox: `browser.sessionstore.resume_from_crash` is no longer
+  force-disabled, so crash recovery actually runs.) Always call `close_all()` in
+  a `finally` when driving the tools from a script.
 
 ---
 
