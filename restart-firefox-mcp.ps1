@@ -148,16 +148,52 @@ if ($listening -and -not $RestartFirefox) {
         Fail "Refusing to launch: a guessed binary could come up on a profile that is not signed in."
         exit 1
     }
+    # NEVER force-kill Firefox here. Two reasons, both learned the hard way:
+    #   1. The Remote Agent only reverts its ~108 automation prefs on the
+    #      "xpcom-shutdown" observer. A force-kill skips it and bakes them into
+    #      the profile permanently - that is how this profile lost Safe
+    #      Browsing, extension updates, password saving and Firefox Home.
+    #   2. A force-kill loses the tab session, which is Tyler's actual work.
+    # The profile guard now prevents (1), but (2) still costs real state, so the
+    # correct behaviour on a stubborn Firefox is to STOP and let a human decide.
     $ff = Get-Process -Name firefox -ErrorAction SilentlyContinue
     if ($ff) {
         Write-Host "   Closing Firefox gracefully so it saves the session..."
         foreach ($p in $ff) { try { $null = $p.CloseMainWindow() } catch {} }
-        Start-Sleep -Seconds 6
-        if (Get-Process -Name firefox -ErrorAction SilentlyContinue) {
-            Warn "Graceful close incomplete - forcing."
-            try { Stop-Process -Name firefox -Force -ErrorAction Stop } catch {}
-            Start-Sleep -Seconds 3
+
+        # Poll instead of sleeping a fixed guess: a big session legitimately
+        # takes longer than any constant we would pick, and we would rather
+        # wait than destroy it.
+        $deadline = 45
+        $closed = $false
+        foreach ($i in 1..$deadline) {
+            Start-Sleep -Seconds 1
+            if (-not (Get-Process -Name firefox -ErrorAction SilentlyContinue)) { $closed = $true; break }
         }
+
+        if (-not $closed) {
+            $left = @(Get-Process -Name firefox -ErrorAction SilentlyContinue)
+            Fail "Firefox is still running after ${deadline}s (PID(s): $($left.Id -join ', '))."
+            Fail "NOT force-killing it - that would lose your tab session."
+            Fail "It is probably holding a dialog open: an unsaved form, a"
+            Fail "'Quit and close N tabs?' prompt, or a beforeunload confirmation."
+            Fail "Close those windows yourself, then re-run this script."
+            exit 1
+        }
+        Ok "Firefox closed cleanly (session saved, automation prefs reverted)."
+    }
+
+    # Guard the profile BEFORE handing it the debug flag. Cheap, and the only
+    # thing standing between a reset profile and a fresh poisoning.
+    $guard = Join-Path $PSScriptRoot 'ensure-profile-guard.ps1'
+    if (Test-Path -LiteralPath $guard) {
+        & powershell -ExecutionPolicy Bypass -NoProfile -File $guard
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Profile guard check failed - refusing to launch with the debug flag."
+            exit 1
+        }
+    } else {
+        Warn "ensure-profile-guard.ps1 not found next to this script - launching UNGUARDED."
     }
     # No -P: this relies on the DEFAULT profile being the logged-in one, which
     # is how Tyler launches Firefox normally. If that ever stops being true,
