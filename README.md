@@ -18,9 +18,16 @@ server **attaches** to it and **never launches or closes Firefox**.
 `--remote-debugging-port` starts Firefox's WebDriver Remote Agent, which calls
 `RecommendedPreferences.applyPreferences()` and writes **~108 automation prefs
 into whatever profile it attaches to**. They land on the *user* pref branch -
-the one that persists to `prefs.js` - and are reverted only by the
-`xpcom-shutdown` observer, i.e. a **clean exit**. Any force-kill, crash, or
+the one that persists to `prefs.js` - and are reverted only from a
+`quit-application` observer, i.e. a **clean exit**. Any force-kill, crash, or
 power loss makes them permanent.
+
+Worse, the leak is self-perpetuating. `applyPreferences()` records a pref for
+later restoration only in the branch where `prefHasUserValue()` was false. After
+a leak every leaked pref *has* a user value, so on every later start it is
+skipped, never enters the restore set, and `restoreAllPreferences()` cannot
+clear it. The cleanup path is disabled for exactly the prefs that need cleaning,
+so one unclean exit is not repaired by any number of clean ones.
 
 This is not theoretical. It happened to this profile: Safe Browsing off,
 extension updates off, password saving off, a completely blank Firefox Home, and
