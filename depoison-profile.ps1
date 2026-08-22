@@ -31,7 +31,10 @@
 #   undone.
 
 param(
-    [string]$Profile = "$env:APPDATA\Mozilla\Firefox\Profiles\781ka9r6.default-release-1785501799337",
+    # Defaults to the single *.default-release* profile if there is exactly one.
+    # Pass it explicitly when you have several - guessing wrong would strip prefs
+    # from a profile you never open, which looks like success and fixes nothing.
+    [string]$Profile,
     # Print the plan and change nothing.
     [switch]$DryRun,
     # Skip the prefs.js cleanup and only install user.js.
@@ -56,6 +59,24 @@ if ($ff) {
 }
 Ok "No Firefox process found."
 
+if (-not $Profile) {
+    $profilesDir = Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles'
+    $candidates = @(Get-ChildItem -LiteralPath $profilesDir -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like '*.default-release*' })
+    if ($candidates.Count -eq 1) {
+        $Profile = $candidates[0].FullName
+    } elseif ($candidates.Count -eq 0) {
+        Fail "No *.default-release* profile found under $profilesDir."
+        Fail "Pass the profile directory explicitly: -Profile <path>"
+        exit 1
+    } else {
+        Fail "Found $($candidates.Count) release profiles; refusing to guess."
+        $candidates | ForEach-Object { Fail "  $($_.Name)" }
+        Fail "Pass the one you actually use: -Profile <path>"
+        exit 1
+    }
+}
+
 if (-not (Test-Path $Profile)) { Fail "Profile not found: $Profile"; exit 1 }
 Ok "Profile: $Profile"
 
@@ -63,7 +84,7 @@ Ok "Profile: $Profile"
 # The automation prefs, verbatim from
 # chrome/remote/content/shared/RecommendedPreferences.sys.mjs (Firefox 153.0.4).
 # Name -> the value the Remote Agent sets. A pref is only removed when its
-# CURRENT value still equals this - anything Tyler deliberately set to the same
+# CURRENT value still equals this - anything you deliberately set to the same
 # name but a different value is left strictly alone.
 $Automation = @{
     'app.normandy.api_url' = '""'

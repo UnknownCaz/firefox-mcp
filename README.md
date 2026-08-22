@@ -85,10 +85,10 @@ One server, two Firefoxes, switched with the `switch_browser` tool:
 
 | Target | Port | Profile | What it is |
 |---|---|---|---|
-| `main` | 9222 | Tyler's own | His tabs, logins, extensions. The default. |
+| `main` | 9222 | yours | Your tabs, logins, extensions. The default. |
 | `sandbox` | 9223 | throwaway | Empty, signed in to nothing. |
 
-Start the sandbox (it can run at the same time as his normal Firefox):
+Start the sandbox (it can run at the same time as your normal Firefox):
 
 ```bat
 powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1
@@ -99,13 +99,13 @@ powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1 -S
 powershell -ExecutionPolicy Bypass -NoProfile -File start-firefox-sandbox.ps1 -Reset
 ```
 
-Use `sandbox` for browsing, scraping, or testing that should not touch Tyler's
-session; use `main` to see or act on what he actually has open.
+Use `sandbox` for browsing, scraping, or testing that should not touch your
+session; use `main` to see or act on what you actually have open.
 
-**A separate profile cannot see his tabs, and that is not a limitation to work
+**A separate profile cannot see your tabs, and that is not a limitation to work
 around - it is the whole point.** A profile *is* the tabs, cookies, logins,
 extensions and prefs, in one directory. There is no way to share the tabs but
-split the settings; they are the same object. If a task needs his real session,
+split the settings; they are the same object. If a task needs your real session,
 it needs `main`.
 
 Implementation notes worth knowing:
@@ -114,7 +114,7 @@ Implementation notes worth knowing:
   active tab, so switching does not disturb either browser.
 - `--no-remote` is **required** for the second instance. Without it a second
   `firefox.exe` just hands its command line to the running one and exits - you
-  get a new tab in Tyler's window and no sandbox.
+  get a new tab in your main window and no sandbox.
 - The sandbox profile lives at `%LOCALAPPDATA%\firefox-mcp\sandbox-profile`,
   outside this repo, because it is disposable state and would be a large
   accidental commit.
@@ -140,7 +140,7 @@ Implementation notes worth knowing:
 ## 2. Install
 
 ```bat
-cd C:\Users\Tyler\Claude\Projects\Work-In-Project\firefox-mcp
+cd C:\path\to\firefox-mcp
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .
 ```
@@ -158,7 +158,7 @@ Run the tests (no browser needed):
 ### Claude Code (CLI)
 
 ```bat
-claude mcp add firefox-mcp -- "C:\Users\Tyler\Claude\Projects\Work-In-Project\firefox-mcp\.venv\Scripts\firefox-mcp.exe"
+claude mcp add firefox-mcp -- "C:\path\to\firefox-mcp\.venv\Scripts\firefox-mcp.exe"
 ```
 
 ### Claude Desktop
@@ -169,7 +169,7 @@ Add to `claude_desktop_config.json` (or via the Connectors / MCP settings UI):
 {
   "mcpServers": {
     "firefox-mcp": {
-      "command": "C:\\Users\\Tyler\\Claude\\Projects\\Work-In-Project\\firefox-mcp\\.venv\\Scripts\\firefox-mcp.exe",
+      "command": "C:\\path\\to\\firefox-mcp\\.venv\\Scripts\\firefox-mcp.exe",
       "args": []
     }
   }
@@ -234,7 +234,7 @@ This is a **guardrail, not a sandbox.**
   credential fields (`autocomplete` = current-password / new-password / cc-*).
   Type those yourself.
 - **Domain allow/deny.** `~/.config/firefox-mcp/config.json` (Windows:
-  `C:\Users\Tyler\.config\firefox-mcp\config.json`). See `config.example.json`.
+  `%USERPROFILE%\.config\firefox-mcp\config.json`). See `config.example.json`.
   - `blockedDomains`: never operate on tabs whose host matches (default has
     banking examples - edit them).
   - `allowedDomains`: if non-empty, operate **only** on those.

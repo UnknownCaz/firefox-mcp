@@ -29,7 +29,7 @@ mcp = FastMCP("firefox-mcp")
 # Browser targets
 #
 # Two Firefoxes, deliberately kept apart:
-#   main    - Tyler's real, logged-in profile. Everything he cares about.
+#   main    - the user's real, logged-in profile. Everything they care about.
 #   sandbox - a throwaway profile on its own port, started by
 #             start-firefox-sandbox.ps1. Not signed in to anything.
 #
@@ -45,7 +45,7 @@ mcp = FastMCP("firefox-mcp")
 BROWSER_TARGETS: dict[str, dict[str, str]] = {
     "main": {
         "ws": "ws://127.0.0.1:9222/session",
-        "desc": "Tyler's own logged-in Firefox (his tabs, logins, extensions)",
+        "desc": "the user's own logged-in Firefox (their tabs, logins, extensions)",
     },
     "sandbox": {
         "ws": "ws://127.0.0.1:9223/session",
@@ -286,12 +286,12 @@ def _key_actions(values: list[tuple[str, str]]) -> list[dict[str, Any]]:
 async def switch_browser(target: str = "") -> str:
     """Choose which Firefox the page tools act on: 'main' or 'sandbox'.
 
-    - main    - Tyler's real, logged-in Firefox on port 9222. His tabs, his
-                accounts, his extensions. Use this to see or act on what he is
-                actually doing.
+    - main    - the user's real, logged-in Firefox on port 9222. Their tabs,
+                their accounts, their extensions. Use this to see or act on
+                what they are actually doing.
     - sandbox - a throwaway automation profile on port 9223, signed in to
                 nothing. Use this for browsing, scraping, or testing that should
-                not touch his session. Start it with start-firefox-sandbox.ps1.
+                not touch their session. Start it with start-firefox-sandbox.ps1.
 
     Call with no argument to see the current target and what is available.
     Switching does not disturb either browser - each keeps its own session and
@@ -336,7 +336,7 @@ async def firefox_status() -> str:
     active tab's URL/title.
 
     Reached over WebDriver BiDi on loopback - NOT Claude Code's in-app browser
-    pane, and NOT Chrome. Says which target is current ('main' = Tyler's real
+    pane, and NOT Chrome. Says which target is current ('main' = the user's real
     logged-in Firefox, 'sandbox' = the throwaway automation profile); use
     switch_browser to change it.
 
@@ -520,7 +520,7 @@ async def click(ref: str, confirmed: bool = False) -> str:
 
     Consequential clicks (submit buttons, or links/buttons whose text or URL
     looks like send/buy/pay/delete/sign in/checkout/...) are confirmation-gated:
-    ask Tyler in the chat first, then call again with confirmed=true.
+    ask the user in the chat first, then call again with confirmed=true.
     """
     async def _run() -> str:
         ctx, url = await _active_context_info()
@@ -546,7 +546,7 @@ async def type_text(ref: str, text: str, submit: bool = False, confirmed: bool =
     Refuses to type into password / credential fields - type those yourself.
 
     If this may submit a form - the `submit` flag, or a newline in `text` typed
-    into a single-line input - it is confirmation-gated: ask Tyler in the chat to
+    into a single-line input - it is confirmation-gated: ask the user in the chat to
     confirm, then call again with confirmed=true. Plain typing without a newline
     (and submit into a non-form field like a search box) is never gated.
     """
@@ -602,7 +602,7 @@ async def press_key(key: str, confirmed: bool = False) -> str:
 
     Enter and Space are confirmation-gated whenever they could activate the
     focused element - a submit control, anything inside a form (Enter), or a
-    focused button/link/checkbox. Ask Tyler first, then call again with
+    focused button/link/checkbox. Ask the user first, then call again with
     confirmed=true. Navigation keys (arrows, Tab, Escape, Home/End, PageUp/Down)
     are never gated.
     """

@@ -1,6 +1,6 @@
 """Browser-target selection - no browser needed.
 
-Two Firefoxes share one server: 'main' (Tyler's logged-in profile, port 9222)
+Two Firefoxes share one server: 'main' (the user's logged-in profile, port 9222)
 and 'sandbox' (a throwaway automation profile, port 9223). The risk this file
 guards against is acting on the WRONG one - specifically, leaking sandbox state
 into the main session or silently staying on main when the caller asked for
@@ -27,7 +27,7 @@ class TargetRegistryTests(unittest.TestCase):
 
     def test_default_target_is_main(self):
         # Defaulting to the sandbox would silently answer questions about
-        # Tyler's browsing with an empty browser.
+        # the user's browsing with an empty browser.
         self.assertEqual(tools.DEFAULT_TARGET, "main")
         self.assertEqual(tools.current_target(), "main")
 
@@ -90,7 +90,7 @@ class SwitchBrowserToolTests(unittest.TestCase):
         try:
             out = str(_call("switch_browser", target="sandbox"))
             # The target must change even when unreachable: silently staying on
-            # main would send later calls to Tyler's real browser.
+            # main would send later calls to the user's real browser.
             self.assertEqual(tools.current_target(), "sandbox")
             self.assertIn("not reachable", out)
             self.assertIn("start-firefox-sandbox", out)

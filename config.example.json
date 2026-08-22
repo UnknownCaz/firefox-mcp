@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to ~/.config/firefox-mcp/config.json (on Windows: C:\\Users\\Tyler\\.config\\firefox-mcp\\config.json). Both lists are optional. Entries are matched as case-insensitive substrings of the tab's hostname.",
+  "_comment": "Copy to ~/.config/firefox-mcp/config.json (on Windows: %USERPROFILE%\\.config\\firefox-mcp\\config.json). Both lists are optional. Entries are matched as case-insensitive substrings of the tab's hostname.",
 
   "blockedDomains": [
     "bank",

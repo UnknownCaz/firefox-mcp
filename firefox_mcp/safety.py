@@ -3,7 +3,7 @@
 This is a *guardrail, not a sandbox*. It structurally enforces that certain
 consequential actions (submitting, buying, deleting, signing in, ...) can only
 proceed after Claude has passed ``confirmed=True`` - which Claude may only set
-after asking Tyler in the chat. The server cannot see the chat, so the flag is
+after asking the user in the chat. The server cannot see the chat, so the flag is
 the structural stand-in for that confirmation.
 """
 
@@ -24,7 +24,7 @@ GATED_KEYWORDS = [
 
 # Domains blocked by default (user-editable in config.json). Entries are matched
 # by host boundary (exact host or subdomain), so they must be real domains /
-# suffixes, not bare keywords. These are EXAMPLES - Tyler should tune them.
+# suffixes, not bare keywords. These are EXAMPLES - tune them for your setup.
 DEFAULT_BLOCKED_DOMAINS = [
     "paypal.com", "venmo.com", "coinbase.com", "wellsfargo.com", "chase.com",
 ]
@@ -237,6 +237,6 @@ def type_submit_requires_confirmation(
 
 
 CONFIRMATION_MESSAGE = (
-    "This action is confirmation-gated ({reason}). Ask Tyler in the chat to confirm, "
+    "This action is confirmation-gated ({reason}). Ask the user in the chat to confirm, "
     "then call again with confirmed=true. (Guardrail, not a sandbox.)"
 )

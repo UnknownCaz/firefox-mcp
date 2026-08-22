@@ -54,7 +54,7 @@ function Fail($msg) { Write-Host "   [XX] $msg"   -ForegroundColor Red }
 
 # Match on the command line, never on the interpreter name alone. A bare
 # "python*" match would happily kill an unrelated pytest run, a different MCP
-# server, or one of Tyler's own scripts - this box runs several.
+# server, or one of your own scripts - this box runs several.
 #
 # The Name allowlist is a REQUIRED second condition, not belt-and-braces. A
 # command-line match on its own also catches any SHELL whose command text merely
@@ -153,7 +153,7 @@ if ($listening -and -not $RestartFirefox) {
     #      "xpcom-shutdown" observer. A force-kill skips it and bakes them into
     #      the profile permanently - that is how this profile lost Safe
     #      Browsing, extension updates, password saving and Firefox Home.
-    #   2. A force-kill loses the tab session, which is Tyler's actual work.
+    #   2. A force-kill loses the tab session, which is the user's actual work.
     # The profile guard now prevents (1), but (2) still costs real state, so the
     # correct behaviour on a stubborn Firefox is to STOP and let a human decide.
     $ff = Get-Process -Name firefox -ErrorAction SilentlyContinue
@@ -196,7 +196,7 @@ if ($listening -and -not $RestartFirefox) {
         Warn "ensure-profile-guard.ps1 not found next to this script - launching UNGUARDED."
     }
     # No -P: this relies on the DEFAULT profile being the logged-in one, which
-    # is how Tyler launches Firefox normally. If that ever stops being true,
+    # is how Firefox is normally launched. If that ever stops being true,
     # pass the profile explicitly rather than trusting the default.
     Start-Process -FilePath $FirefoxExe -ArgumentList @('--remote-debugging-port', "$DebugPort")
     Write-Host "   Waiting for the remote agent to bind..."

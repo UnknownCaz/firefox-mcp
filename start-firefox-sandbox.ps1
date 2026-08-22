@@ -1,10 +1,10 @@
 # start-firefox-sandbox.ps1
 #
 # PURPOSE
-#   Start a SECOND Firefox on a throwaway profile, alongside Tyler's real one,
-#   so Claude can browse without touching his logged-in session.
+#   Start a SECOND Firefox on a throwaway profile, alongside your real one,
+#   so Claude can browse without touching your logged-in session.
 #
-#   main    port 9222  Tyler's profile   - his tabs, logins, extensions
+#   main    port 9222  your profile      - your tabs, logins, extensions
 #   sandbox port 9223  this profile      - signed in to nothing
 #
 #   Switch between them from the MCP with the `switch_browser` tool.
@@ -12,16 +12,16 @@
 # WHY A SEPARATE PROFILE CANNOT SEE HIS TABS
 #   A profile IS the tabs, cookies, logins, extensions and prefs - one
 #   directory, one unit. This browser starts empty and stays empty. That is the
-#   point: it is for work that should not reach his session. If you need to see
-#   what Tyler actually has open, use the 'main' target instead.
+#   point: it is for work that should not reach your session. If you need to see
+#   what you actually have open, use the 'main' target instead.
 #
 # THE FLAGS, AND WHY EACH MATTERS
 #   -profile <dir>  use this directory directly. Deliberately NOT -P <name>:
 #                   -P registers the profile in profiles.ini and makes it show
-#                   up in Tyler's profile manager. -profile keeps it invisible.
+#                   up in your profile manager. -profile keeps it invisible.
 #   --no-remote     REQUIRED. Without it a second firefox.exe just hands its
 #                   command line to the already-running instance and exits -
-#                   you get a new tab in his window and no second browser.
+#                   you get a new tab in your main window and no second browser.
 #   --remote-debugging-port 9223
 #                   separate port, so the two remote agents do not collide.
 #
@@ -152,13 +152,13 @@ if (-not $bound) {
     Fail "Port $SandboxPort never came up."
     Fail "Most likely cause: --no-remote was ignored and this handed off to the"
     Fail "running Firefox instead of starting a second one. Check for a new tab"
-    Fail "in Tyler's window."
+    Fail "in your main Firefox window."
     exit 1
 }
 
 Ok "Sandbox Firefox is listening on port $SandboxPort."
 Write-Host ""
 Write-Host "   From the MCP: switch_browser('sandbox') to use it," -ForegroundColor White
-Write-Host "                 switch_browser('main')    to go back to Tyler's." -ForegroundColor White
+Write-Host "                 switch_browser('main')    to go back to yours." -ForegroundColor White
 Write-Host "   This window is disposable - close it any time, or run -Reset to wipe it." -ForegroundColor White
 exit 0
